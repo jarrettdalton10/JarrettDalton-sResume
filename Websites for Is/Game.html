@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>5-Team Tic-Tac-Toe Tournament</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Set log level to debug for console output
+        setLogLevel('Debug');
+
+        // Global variables for Firebase setup
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __auth_token : null;
+
+        let db, auth;
+
+        // Function to initialize Firebase and authenticate
+        async function initializeFirebaseAndAuth() {
+            try {
+                if (Object.keys(firebaseConfig).length === 0) {
+                    console.error("Firebase config is missing. Cannot initialize Firestore.");
+                    return;
+                }
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // Authenticate the user
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+
+                // Wait for auth state to be ready
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        window.userId = user.uid;
+                        // Attach the global functions after auth is ready
+                        window.db = db;
+                        window.saveTournamentState = saveTournamentState;
+                        window.loadTournamentState = loadTournamentState;
+                        // Start loading the game state
+                        window.loadTournamentState();
+                    } else {
+                        console.log("Authentication failed or user logged out.");
+                        // Fallback user ID if authentication somehow fails
+                        window.userId = crypto.randomUUID();
+                        window.db = db;
+                        window.saveTournamentState = saveTournamentState;
+                        window.loadTournamentState = loadTournamentState;
+                        window.loadTournamentState();
+                    }
+                });
+
+            } catch (error) {
+                console.error("Error initializing Firebase or authentication:", error);
+            }
+        }
+
+        // Firestore Path and document ID
+        const getTournamentDocRef = () => {
+            const path = `/artifacts/${appId}/public/data/tournament_tictactoe`;
+            return doc(db, path, 'current_state');
+        };
+
+        // Function to save the game state to Firestore
+        async function saveTournamentState(state) {
+            if (!db) return;
+            try {
+                // Ensure board is serializable (it's already a simple array of strings)
+                await setDoc(getTournamentDocRef(), state);
+                console.log("Tournament state saved successfully.");
+            } catch (e) {
+                console.error("Error saving document: ", e);
+            }
+        }
+
+        // Function to load and subscribe to the game state
+        function loadTournamentState() {
+            if (!db) return;
+            try {
+                onSnapshot(getTournamentDocRef(), (docSnapshot) => {
+                    if (docSnapshot.exists()) {
+                        const state = docSnapshot.data();
+                        console.log("Tournament state loaded:", state);
+                        window.gameState.setState(state);
+                    } else {
+                        console.log("No tournament state found. Initializing new game.");
+                        // If no document exists, initialize and save the default state
+                        window.gameState.initializeNewTournament();
+                    }
+                }, (error) => {
+                    console.error("Error listening to document:", error);
+                });
+            } catch (e) {
+                console.error("Error setting up snapshot listener: ", e);
+            }
+        }
+
+        // Start initialization
+        initializeFirebaseAndAuth();
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f9;
+        }
+        .board-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            width: 100%;
+            max-width: 400px; /* Max size for desktop */
+            aspect-ratio: 1 / 1;
+            margin: 0 auto;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            overflow: hidden;
+            background-color: #fff;
+        }
+        .cell {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 3.5rem;
+            font-weight: 800;
+            cursor: pointer;
+            border: 4px solid #3b82f6; /* Blue border for the grid */
+            transition: background-color 0.2s;
+            color: #1e3a8a; /* Darker blue text for empty cells (which is not used now but kept for consistency) */
+        }
+        .cell:hover:not(.filled) {
+            background-color: #eff6ff; /* Light blue hover */
+        }
+        .cell:nth-child(3n) { border-right: none; }
+        .cell:nth-child(n+7) { border-bottom: none; }
+        .cell:nth-child(3n+1) { border-left: none; }
+        .cell:nth-child(-n+3) { border-top: none; }
+
+        /* Removed .cell-x and .cell-o as we use emoji symbols now */
+
+        /* Responsive adjustments */
+        @media (max-width: 640px) {
+            .board-grid {
+                max-width: 90vw;
+            }
+            .cell {
+                font-size: 2.5rem;
+            }
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8 bg-gray-50 min-h-screen">
+
+    <header class="text-center mb-8">
+        <h1 class="text-4xl sm:text-5xl font-extrabold text-gray-800 tracking-tight">
+            🏆 The Great Tic-Tac-Toe Tournament
+        </h1>
+        <p class="mt-2 text-xl text-indigo-600 font-semibold" id="tournament-message">Initializing Tournament...</p>
+    </header>
+
+    <main class="flex flex-col lg:flex-row gap-8 max-w-7xl mx-auto">
+        
+        <!-- Tournament Bracket / Status Column (Left on Desktop, Top on Mobile) -->
+        <div class="lg:w-1/3 p-6 bg-white rounded-xl shadow-lg border border-gray-100 h-fit">
+            <h2 class="text-2xl font-bold mb-4 border-b pb-2 text-gray-700 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 mr-2 text-yellow-500" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l3 3a1 1 0 001.414-1.414L11 9.586V6z" clip-rule="evenodd" />
+                </svg>
+                Tournament Status
+            </h2>
+            
+            <div id="bracket-display" class="space-y-4">
+                <!-- Bracket will be rendered here -->
+            </div>
+
+            <button id="reset-button" onclick="gameState.initializeNewTournament(true)"
+                    class="mt-6 w-full py-2 px-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-lg shadow-md transition duration-300 transform hover:scale-105">
+                Start New Tournament
+            </button>
+            <div class="mt-4 text-xs text-gray-500 text-center">User ID: <span id="user-id">Loading...</span></div>
+        </div>
+
+        <!-- Tic-Tac-Toe Game Column (Right on Desktop, Bottom on Mobile) -->
+        <div class="lg:w-2/3 p-6 bg-white rounded-xl shadow-lg border border-gray-100">
+            <h2 class="text-3xl font-bold mb-4 text-center text-gray-800" id="match-title">Loading Match...</h2>
+            
+            <div id="game-message" class="text-xl font-semibold text-center py-4 rounded-lg mb-6 bg-indigo-100 text-indigo-800 shadow-inner">
+                Waiting for state...
+            </div>
+
+            <!-- The Tic-Tac-Toe Board -->
+            <div class="board-grid" id="tic-tac-toe-board">
+                <!-- Cells generated by JavaScript -->
+            </div>
+
+            <!-- Modal for showing game result -->
+            <div id="result-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 z-50 hidden flex justify-center items-center">
+                <div class="bg-white p-8 rounded-xl shadow-2xl text-center max-w-sm w-full transform transition-all duration-300 scale-95">
+                    <h3 class="text-3xl font-bold mb-4 text-gray-800" id="modal-heading"></h3>
+                    <p class="text-lg text-gray-600 mb-6" id="modal-message"></p>
+                    <button id="next-match-button" 
+                            class="py-3 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-full shadow-lg transition duration-300 transform hover:scale-105">
+                        Continue to Next Match
+                    </button>
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <script>
+        // --- Game State and Logic ---
+
+        const TEAMS = [
+            { id: 'S', name: 'Squares', symbol: '🟦', color: 'bg-yellow-400' },
+            { id: 'T', name: 'Triangles', symbol: '🔺', color: 'bg-red-400' },
+            { id: 'B', name: 'Bells', symbol: '🔔', color: 'bg-purple-400' },
+            { id: 'C', name: 'Circles', symbol: '🟢', color: 'bg-green-400' },
+            { id: 'X', name: 'Team X', symbol: '❌', color: 'bg-blue-400' },
+        ];
+
+        // Define the fixed tournament structure (4 Matches total for 5 teams)
+        const INITIAL_MATCH_SCHEDULE = [
+            // Round 1 (Play-in)
+            { id: 'M1', stage: 'R1 Play-in', X: 'S', O: 'T', winnerId: null, nextMatch: 'M3_O' },
+            // Round 2 (Quarterfinals)
+            { id: 'M2', stage: 'R2 Quarterfinal 1', X: 'C', O: 'X', winnerId: null, nextMatch: 'M4_X' },
+            { id: 'M3', stage: 'R2 Quarterfinal 2', X: 'B', O: 'W1', winnerId: null, nextMatch: 'M4_O' }, // W1 = Winner of M1
+            // Round 3 (Finals)
+            { id: 'M4', stage: 'R3 FINAL', X: 'W2', O: 'W3', winnerId: null, nextMatch: null }, // W2 = Winner of M2, W3 = Winner of M3
+        ];
+
+        // Winning combinations for Tic-Tac-Toe
+        const WIN_CONDITIONS = [
+            [0, 1, 2], [3, 4, 5], [6, 7, 8], // Rows
+            [0, 3, 6], [1, 4, 7], [2, 5, 8], // Columns
+            [0, 4, 8], [2, 4, 6]             // Diagonals
+        ];
+
+        class TournamentGame {
+            constructor() {
+                this.state = this.getDefaultState();
+                this.boardElement = document.getElementById('tic-tac-toe-board');
+                this.messageElement = document.getElementById('game-message');
+                this.tournamentMsgElement = document.getElementById('tournament-message');
+                this.matchTitleElement = document.getElementById('match-title');
+                this.bracketDisplayElement = document.getElementById('bracket-display');
+                this.modal = document.getElementById('result-modal');
+                this.modalHeading = document.getElementById('modal-heading');
+                this.modalMessage = document.getElementById('modal-message');
+                this.nextMatchButton = document.getElementById('next-match-button');
+                this.setupEventListeners();
+                
+                // Initialize the UI on script load
+                document.getElementById('user-id').textContent = window.userId || 'Connecting...';
+                this.renderBoard(); // Render empty board initially
+                this.renderBracket(); // Render initial bracket
+            }
+
+            getDefaultState() {
+                return {
+                    teams: TEAMS.map(t => ({ ...t, wins: 0, losses: 0, status: 'Active' })),
+                    schedule: JSON.parse(JSON.stringify(INITIAL_MATCH_SCHEDULE)),
+                    currentMatchIndex: 0,
+                    board: Array(9).fill(null), // TTT board state now stores team symbols
+                    currentPlayer: 'X', // 'X' or 'O' (determines who's turn it is)
+                    gameStatus: 'IN_PROGRESS', // 'IN_PROGRESS', 'X_WINS', 'O_WINS', 'DRAW', 'COMPLETE'
+                };
+            }
+
+            // Public method to be called by Firebase to update state
+            setState(newState) {
+                // Only update if the loaded state is newer or more complete
+                if (newState.currentMatchIndex >= this.state.currentMatchIndex) {
+                    this.state = newState;
+                    this.updateUI();
+                }
+            }
+
+            // Public method to start a new tournament
+            initializeNewTournament(forceSave = false) {
+                this.state = this.getDefaultState();
+                this.hideModal();
+                if (forceSave) {
+                    window.saveTournamentState(this.state);
+                } else {
+                    this.updateUI();
+                }
+            }
+
+            setupEventListeners() {
+                this.boardElement.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('cell')) {
+                        const index = parseInt(e.target.dataset.index);
+                        this.handleMove(index);
+                    }
+                });
+                this.nextMatchButton.addEventListener('click', () => {
+                    this.goToNextMatch();
+                });
+            }
+
+            getCurrentMatch() {
+                return this.state.schedule[this.state.currentMatchIndex];
+            }
+
+            getMatchParticipants(match) {
+                const teamMap = new Map(this.state.teams.map(t => [t.id, t]));
+                
+                const resolveTeam = (id) => {
+                    if (id in teamMap) return teamMap.get(id);
+                    
+                    if (id.startsWith('W')) {
+                        const matchId = id === 'W1' ? 'M1' : (id === 'W2' ? 'M2' : 'M3');
+                        const winnerMatch = this.state.schedule.find(m => m.id === matchId);
+                        if (winnerMatch && winnerMatch.winnerId) {
+                            return teamMap.get(winnerMatch.winnerId);
+                        }
+                    }
+                    return { id: 'TBD', name: 'TBD', symbol: '?', color: 'bg-gray-200' };
+                };
+
+                return {
+                    playerX: resolveTeam(match.X),
+                    playerO: resolveTeam(match.O),
+                };
+            }
+
+            // --- Game Logic ---
+
+            checkWin(board, symbol) { // Checks against the team's symbol
+                return WIN_CONDITIONS.some(condition => {
+                    return condition.every(index => board[index] === symbol);
+                });
+            }
+
+            checkDraw(board) {
+                return board.every(cell => cell !== null);
+            }
+
+            handleMove(index) {
+                if (this.state.gameStatus !== 'IN_PROGRESS' || this.state.board[index] !== null) {
+                    return; // Ignore clicks if game is over or cell is filled
+                }
+                
+                const match = this.getCurrentMatch();
+                const { playerX, playerO } = this.getMatchParticipants(match);
+
+                // Determine the actual team symbol that is making the move (e.g., '🟦' or '🔺')
+                const teamSymbol = this.state.currentPlayer === 'X' ? playerX.symbol : playerO.symbol;
+
+                this.state.board[index] = teamSymbol; // Store the symbol, not 'X' or 'O'
+
+                if (this.checkWin(this.state.board, teamSymbol)) {
+                    // Determine if the winning symbol belongs to 'X' team or 'O' team
+                    this.state.gameStatus = teamSymbol === playerX.symbol ? 'X_WINS' : 'O_WINS';
+                    this.endGame();
+                } else if (this.checkDraw(this.state.board)) {
+                    this.state.gameStatus = 'DRAW';
+                    this.endGame();
+                } else {
+                    this.state.currentPlayer = this.state.currentPlayer === 'X' ? 'O' : 'X';
+                }
+
+                // Save the updated state to Firestore
+                window.saveTournamentState(this.state);
+            }
+
+            endGame() {
+                const match = this.getCurrentMatch();
+                const { playerX, playerO } = this.getMatchParticipants(match);
+
+                let winnerTeam = null;
+                let message = '';
+                let title = '';
+
+                if (this.state.gameStatus === 'X_WINS') {
+                    winnerTeam = playerX;
+                    title = `${playerX.symbol} ${playerX.name} WINS!`;
+                    message = `${playerX.name} has defeated ${playerO.name} and advances in the tournament!`;
+                } else if (this.state.gameStatus === 'O_WINS') {
+                    winnerTeam = playerO;
+                    title = `${playerO.symbol} ${playerO.name} WINS!`;
+                    message = `${playerO.name} has defeated ${playerX.name} and advances in the tournament!`;
+                } else if (this.state.gameStatus === 'DRAW') {
+                    // In case of a draw, we'll assign the win to the team that was 'X' to keep the tournament moving.
+                    // A real tournament would have a rematch, but we simplify here.
+                    winnerTeam = playerX; 
+                    title = `It's a DRAW!`;
+                    message = `The match was a draw. ${playerX.name} (Team X) advances on coin toss.`;
+                }
+
+                // Update the schedule and team stats
+                if (winnerTeam) {
+                    match.winnerId = winnerTeam.id;
+
+                    // Update team stats (simplistic: only tracking the winner)
+                    const winnerStats = this.state.teams.find(t => t.id === winnerTeam.id);
+                    if (winnerStats) winnerStats.wins += 1;
+                    
+                    // Update loser stats
+                    const loserTeam = winnerTeam.id === playerX.id ? playerO : playerX;
+                    if(loserTeam.id !== 'TBD') {
+                        const loserStats = this.state.teams.find(t => t.id === loserTeam.id);
+                        if(loserStats) {
+                            loserStats.losses += 1;
+                            loserStats.status = 'Eliminated';
+                        }
+                    }
+
+                    // Check if tournament is over
+                    if (this.state.currentMatchIndex === this.state.schedule.length - 1) {
+                        this.state.gameStatus = 'COMPLETE';
+                        this.tournamentMsgElement.textContent = `🏆 TOURNAMENT CHAMPION: ${winnerTeam.name}! 🏆`;
+                        this.nextMatchButton.textContent = 'View Final Results';
+                    } else {
+                        this.nextMatchButton.textContent = 'Continue to Next Match';
+                    }
+                }
+                
+                this.showModal(title, message);
+            }
+
+            goToNextMatch() {
+                this.hideModal();
+                if (this.state.gameStatus === 'COMPLETE') {
+                    // Do nothing or show final results screen if implemented
+                    return;
+                }
+                
+                this.state.currentMatchIndex += 1;
+                if (this.state.currentMatchIndex < this.state.schedule.length) {
+                    this.resetBoard();
+                    this.state.currentPlayer = 'X';
+                    this.state.gameStatus = 'IN_PROGRESS';
+                    window.saveTournamentState(this.state);
+                }
+            }
+
+            // --- UI Rendering ---
+
+            updateUI() {
+                document.getElementById('user-id').textContent = window.userId;
+                this.renderBoard();
+                this.renderBracket();
+                this.updateMessage();
+
+                // Check if a match is running or if we need to show the modal immediately
+                if (this.state.gameStatus !== 'IN_PROGRESS' && this.state.gameStatus !== 'COMPLETE') {
+                    this.endGame();
+                } else if (this.state.gameStatus === 'COMPLETE') {
+                    this.tournamentMsgElement.textContent = `🏆 TOURNAMENT CHAMPION: ${this.state.teams.find(t => t.id === this.state.schedule[3].winnerId)?.name || 'TBD'}! 🏆`;
+                    this.matchTitleElement.textContent = 'TOURNAMENT COMPLETE!';
+                }
+            }
+
+            resetBoard() {
+                this.state.board = Array(9).fill(null);
+                this.state.currentPlayer = 'X';
+                this.state.gameStatus = 'IN_PROGRESS';
+            }
+
+            renderBoard() {
+                this.boardElement.innerHTML = '';
+                this.state.board.forEach((cell, index) => {
+                    const div = document.createElement('div');
+                    // 'cell' now contains the team symbol (emoji) or null
+                    div.className = `cell ${cell ? 'filled' : ''} transition-all duration-200`;
+                    div.dataset.index = index;
+                    div.textContent = cell || '';
+                    this.boardElement.appendChild(div);
+                });
+            }
+
+            updateMessage() {
+                const match = this.getCurrentMatch();
+                if (!match) {
+                    this.matchTitleElement.textContent = 'Tournament Complete!';
+                    this.messageElement.textContent = 'A champion has been crowned!';
+                    return;
+                }
+                
+                const { playerX, playerO } = this.getMatchParticipants(match);
+
+                this.matchTitleElement.textContent = `${match.stage}: ${playerX.symbol} ${playerX.name} (X) vs ${playerO.symbol} ${playerO.name} (O)`;
+                this.tournamentMsgElement.textContent = `Current Match: ${match.id} - ${match.stage}`;
+
+                if (this.state.gameStatus === 'IN_PROGRESS') {
+                    const currentPlayerTeam = this.state.currentPlayer === 'X' ? playerX : playerO;
+                    this.messageElement.textContent = `${this.state.currentPlayer}'s turn! (${currentPlayerTeam.symbol} ${currentPlayerTeam.name})`;
+                    this.messageElement.classList.remove('bg-red-100', 'bg-green-100', 'bg-gray-100');
+                    this.messageElement.classList.add('bg-indigo-100', 'text-indigo-800');
+                } else if (this.state.gameStatus === 'X_WINS' || this.state.gameStatus === 'O_WINS') {
+                    const winnerTeam = this.state.gameStatus === 'X_WINS' ? playerX : playerO;
+                    this.messageElement.textContent = `${winnerTeam.symbol} ${winnerTeam.name} WINS THE MATCH!`;
+                    this.messageElement.classList.remove('bg-indigo-100', 'text-indigo-800', 'bg-gray-100');
+                    this.messageElement.classList.add('bg-green-100', 'text-green-800');
+                } else if (this.state.gameStatus === 'DRAW') {
+                    this.messageElement.textContent = `MATCH ENDED IN A DRAW!`;
+                    this.messageElement.classList.remove('bg-indigo-100', 'text-indigo-800', 'bg-green-100');
+                    this.messageElement.classList.add('bg-gray-100', 'text-gray-800');
+                }
+            }
+
+            renderBracket() {
+                const schedule = this.state.schedule;
+                let html = '';
+
+                const getTeamHtml = (team) => {
+                    if (team.id === 'TBD') {
+                        return `<span class="text-gray-500 font-medium">TBD</span>`;
+                    }
+                    const teamData = this.state.teams.find(t => t.id === team.id);
+                    const status = teamData && teamData.status === 'Eliminated' ? 'opacity-50 line-through' : '';
+                    return `<span class="font-bold ${status} flex items-center">
+                                <span class="text-xl mr-1">${team.symbol}</span>
+                                ${team.name}
+                            </span>`;
+                };
+                
+                // M4 - FINAL
+                const M4 = schedule[3];
+                const P_M4 = this.getMatchParticipants(M4);
+                
+                // Match Item Renderer
+                const renderMatch = (match, p) => {
+                    const isCurrent = this.state.currentMatchIndex === this.state.schedule.findIndex(m => m.id === match.id);
+                    const isDone = !!match.winnerId;
+                    const bg = isDone ? 'bg-emerald-50 border-emerald-400' : (isCurrent ? 'bg-sky-50 border-sky-400 shadow-lg' : 'bg-white border-gray-300');
+                    const winnerId = match.winnerId;
+                    const winnerSymbol = this.state.teams.find(t => t.id === winnerId)?.symbol;
+                    const winnerName = this.state.teams.find(t => t.id === winnerId)?.name;
+                    
+                    return `
+                        <div class="p-3 rounded-lg border-2 ${bg} transition duration-300">
+                            <p class="text-sm font-semibold text-gray-500 mb-1 flex justify-between">
+                                <span>${match.stage} (${match.id})</span>
+                                ${isCurrent ? '<span class="text-red-500 animate-pulse">PLAYING</span>' : ''}
+                            </p>
+                            <div class="space-y-1">
+                                <div class="flex justify-between items-center text-sm">
+                                    <span class="text-gray-600">X:</span>
+                                    ${getTeamHtml(p.playerX)}
+                                </div>
+                                <div class="flex justify-between items-center text-sm border-t border-gray-200 pt-1">
+                                    <span class="text-gray-600">O:</span>
+                                    ${getTeamHtml(p.playerO)}
+                                </div>
+                            </div>
+                            ${isDone ? `<p class="mt-2 text-center text-md font-extrabold text-emerald-700 border-t border-emerald-200 pt-2">Winner: ${winnerSymbol} ${winnerName}</p>` : ''}
+                        </div>
+                    `;
+                };
+
+                html += `<div class="text-lg font-extrabold text-center text-gray-800 mb-4 border-b pb-2">TOURNAMENT BRACKET</div>`;
+
+                // Render all matches (M1, M2, M3, M4)
+                for(const match of schedule) {
+                    const participants = this.getMatchParticipants(match);
+                    html += renderMatch(match, participants);
+                }
+                
+                // FINAL WINNER DISPLAY
+                const champion = this.state.teams.find(t => t.id === M4.winnerId);
+                if (champion) {
+                    html += `
+                        <div class="mt-6 p-4 rounded-xl border-4 border-yellow-500 bg-yellow-100 text-center shadow-2xl">
+                            <p class="text-2xl font-black text-yellow-800">CHAMPION</p>
+                            <p class="text-4xl font-extrabold text-gray-900 mt-2 flex items-center justify-center">
+                                <span class="text-5xl mr-2">${champion.symbol}</span> ${champion.name}
+                            </p>
+                        </div>
+                    `;
+                }
+
+                this.bracketDisplayElement.innerHTML = html;
+            }
+
+            showModal(title, message) {
+                this.modalHeading.textContent = title;
+                this.modalMessage.textContent = message;
+                this.modal.classList.remove('hidden');
+                document.getElementById('next-match-button').focus();
+            }
+
+            hideModal() {
+                this.modal.classList.add('hidden');
+            }
+        }
+
+        // Initialize the game instance globally once
+        window.gameState = new TournamentGame();
+
+        // Check if Firebase is already loaded and initialize if needed
+        if (window.db) {
+            window.loadTournamentState();
+        }
+
+    </script>
+</body>
+</html>

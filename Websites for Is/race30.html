@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Jumanji: Grand Circle Arcade</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0b1011; font-family: 'Arial Black', sans-serif; }
+        
+        #ui {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        #hud {
+            display: flex; justify-content: space-between; padding: 30px;
+            color: #fff; text-shadow: 0 4px 10px #000;
+        }
+
+        .stat { font-size: 24px; }
+        .big-stat { font-size: 40px; color: #00e676; }
+
+        #countdown {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 150px; color: #ff3d00;
+            text-shadow: 0 0 40px #ff0000;
+            z-index: 100;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -50%) scale(1.1); }
+            100% { transform: translate(-50%, -50%) scale(1); }
+        }
+
+        #controls-hint {
+            position: absolute; bottom: 30px; width: 100%;
+            text-align: center; color: rgba(255,255,255,0.6);
+            font-size: 18px; font-family: sans-serif;
+        }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <div id="hud">
+        <div class="stat">POS: <span id="pos" class="big-stat">1/4</span></div>
+        <div id="lap-display" class="stat">LAP <span id="lap" class="big-stat">1</span> / 5</div>
+    </div>
+    <div id="countdown">5</div>
+    <div id="controls-hint">Hold SPACE to Drive | Arrows to Steer</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+    // --- SETTINGS ---
+    // Wider turns = Larger Radius. 
+    // We increased Radius from 150 to 300 for a "Grand" feel.
+    const TRACK_RADIUS = 300; 
+    const TRACK_WIDTH = 70; // Wider road
+    const INNER_BOUND = TRACK_RADIUS - TRACK_WIDTH/2;
+    const OUTER_BOUND = TRACK_RADIUS + TRACK_WIDTH/2;
+
+    // --- VARIABLES ---
+    let scene, camera, renderer;
+    let player;
+    let jewel;
+    let obstacles = [];
+    let rivals = [];
+    
+    // Physics & Game State
+    let speed = 0;
+    let maxSpeed = 0.012; // Adjusted for larger radius
+    let boostTimer = 0;
+    let playerAngle = 0;
+    let playerRadius = TRACK_RADIUS;
+    let currentLap = 1;
+    let totalLaps = 5;
+    
+    // Race State
+    let raceStarted = false;
+    let countdownVal = 5;
+
+    // Input
+    const keys = { Space: false, ArrowLeft: false, ArrowRight: false };
+
+    function init() {
+        // 1. Scene Setup
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x0b1011, 0.0015);
+
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        //

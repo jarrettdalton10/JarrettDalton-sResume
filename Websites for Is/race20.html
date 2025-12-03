@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Jumanji: The Jaguar's Circle</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0b1011; font-family: 'Arial Black', sans-serif; }
+        
+        #ui {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+        }
+
+        #hud {
+            display: flex; justify-content: space-between; padding: 30px;
+            color: #fff; text-shadow: 0 4px 10px #000;
+        }
+
+        .stat { font-size: 24px; }
+        .big-stat { font-size: 40px; color: #00e676; }
+
+        #lap-display { text-align: right; }
+        
+        #center-text {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 80px; color: #ffeb3b;
+            text-shadow: 0 0 20px #ff9800;
+            display: none;
+            z-index: 100;
+        }
+        
+        #boost-fx {
+            position: absolute; bottom: 50px; left: 50%;
+            transform: translateX(-50%);
+            color: #ff0; font-size: 20px; opacity: 0;
+            transition: opacity 0.2s;
+        }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <div id="hud">
+        <div class="stat">POS: <span id="pos" class="big-stat">1/4</span></div>
+        <div id="lap-display" class="stat">LAP <span id="lap" class="big-stat">1</span> / 5</div>
+    </div>
+    <div id="center-text">GO!</div>
+    <div id="boost-fx">SMOLDER BOOST!</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+    // --- MATH UTILS ---
+    // We use Polar Coordinates: Angle (theta) and Radius (distance from center)
+    const TRACK_RADIUS = 150;
+    const TRACK_WIDTH = 40;
+    const INNER_BOUND = TRACK_RADIUS - TRACK_WIDTH/2;
+    const OUTER_BOUND = TRACK_RADIUS + TRACK_WIDTH/2;
+
+    // --- VARIABLES ---
+    let scene, camera, renderer;
+    let player;
+    let jewel;
+    let obstacles = [];
+    let rivals = [];
+    let speed = 0;
+    let maxSpeed = 0.02; // Angular speed
+    let boostTimer = 0;
+    
+    // Player State
+    let playerAngle = 0; // Where we are on the circle (0 to 2PI)
+    let playerRadius = TRACK_RADIUS; // How far from center
+    let currentLap = 1;
+    let totalLaps = 5;
+    let isGameActive = true;
+
+    // Input
+    const keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+
+    function init() {
+        // 1. Scene
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x0b1011, 0.002);
+
+        // 2. Camera
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+        // 3. Renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // 4. Lighting
+        const ambient = new THREE.AmbientLight(0x404040); // Soft white light
+        scene.add(ambient);
+
+        const sun = new THREE.PointLight(0xffffff, 1, 500);
+        sun.position.set(0, 100, 0); // Light comes from the center jewel
+        sun.castShadow = true;
+        scene.add(sun);
+
+        // 5. Build The World
+        createTrack();
+        createCenterJewel();
+        createEnvironment();
+
+        // 6. Player
+        player = createCar(0xaaaaaa);
+        scene.add(player);
+
+        // 7. Rivals
+        rivals.push(createRival(0xd32f2f, "Ruby", 0.018, 10)); // Red
+        rivals.push(createRival(0x388e3c, "Mouse", 0.016, -10)); // Green
+        rivals.push(createRival(0x1976d2, "Oberon", 0.015, 5)); // Blue
+
+        // Listeners
+        window.addEventListener('resize', onResize);
+        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
+        // Start Text
+        const msg = document.getElementById('center-text');
+        msg.style.display = "block";
+        setTimeout(() => msg.style.display = "none", 2000);
+
+        animate();
+    }
+
+    // --- CREATION FUNCTIONS ---
+
+    function createTrack() {
+        // The Road
+        const geometry = new THREE.RingGeometry(INNER_BOUND, OUTER_BOUND, 64);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0x5d4037, 
+            roughness: 1,
+            side: THREE.DoubleSide
+        });
+        const road = new THREE.Mesh(geometry, material);
+        road.rotation.x = -Math.PI / 2;
+        road.receiveShadow = true;
+        scene.add(road);
+
+        // The Grass Base
+        const grassGeo = new THREE.CircleGeometry(300, 64);
+        const grassMat = new THREE.MeshStandardMaterial({ color: 0x1b5e20 });
+        const grass = new THREE.Mesh(grassGeo, grassMat);
+        grass.rotation.x = -Math.PI / 2;
+        grass.position.y = -1;
+        scene.add(grass);
+    }
+
+    function createCenterJewel() {
+        // The giant floating emerald in the center
+        const geo = new THREE.IcosahedronGeometry(20, 0);
+        const mat = new THREE.MeshPhongMaterial({ 
+            color: 0x00ff00, 
+            emissive: 0x004400,
+            shininess: 100,
+            transparent: true,
+            opacity: 0.9
+        });
+        jewel = new THREE.Mesh(geo, mat);
+        jewel.position.y = 40;
+        scene.add(jewel);
+
+        // A beam of light
+        const beamGeo = new THREE.CylinderGeometry(5, 5, 200, 16);
+        const beamMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, opacity: 0.2, transparent: true, blending: THREE.AdditiveBlending });
+        const beam = new THREE.Mesh(beamGeo, beamMat);
+        beam.position.y = 100;
+        scene.add(beam);
+    }
+
+    function createCar(color) {
+        const group = new THREE.Group();
+        // Simple car shape
+        const body = new THREE.Mesh(
+            new THREE.BoxGeometry(2, 1, 4),
+            new THREE.MeshStandardMaterial({ color: color })
+        );
+        body.position.y = 0.5;
+        body.castShadow = true;
+        group.add(body);
+        return group;
+    }
+
+    function createRival(color, name, speed, radiusOffset) {
+        const mesh = createCar(color);
+        scene.add(mesh);
+        return {
+            mesh: mesh,
+            angle: 0, // Start line
+            radius: TRACK_RADIUS + radiusOffset,
+            baseSpeed: speed,
+            name: name,
+            lap: 1
+        };
+    }
+
+    function createEnvironment() {
+        // Scatter trees and rocks around the ring
+        for(let i=0; i<40; i++) {
+            const angle = (Math.PI * 2 * i) / 40;
+            // Add some randomness to angle
+            const finalAngle = angle + (Math.random() - 0.5);
+            
+            // Randomly place obstacles ON the track or trees OFF the track
+            const type = Math.random();
+
+            if (type > 0.7) {
+                // Rock on track
+                const r = INNER_BOUND + Math.random() * TRACK_WIDTH;
+                createRock(finalAngle, r);
+            } else {
+                // Tree (Inner or Outer)
+                const r = Math.random() > 0.5 ? INNER_BOUND - 10 : OUTER_BOUND + 10;
+                createTree(finalAngle, r);
+            }
+        }
+        
+        // Add a Finish Line (A white strip)
+        const lineGeo = new THREE.PlaneGeometry(TRACK_WIDTH, 2);
+        const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const line = new THREE.Mesh(lineGeo, lineMat);
+        line.rotation.x = -Math.PI / 2;
+        line.position.set(TRACK_RADIUS, 0.1, 0); // Position at Angle 0
+        scene.add(line);
+    }
+
+    function createRock(angle, radius) {
+        const geo = new THREE.DodecahedronGeometry(2);
+        const mat = new THREE.MeshStandardMaterial({ color: 0x777777 });
+        const rock = new THREE.Mesh(geo, mat);
+        
+        // Convert Polar to Cartesian
+        rock.position.x = radius * Math.cos(angle);
+        rock.position.z = radius * Math.sin(angle);
+        rock.position.y = 1;
+        rock.castShadow = true;
+        
+        scene.add(rock);
+        
+        // Store collision data (Angle is tricky for collision, we use distance)
+        obstacles.push({ mesh: rock, radius: radius, angle: angle });
+    }
+
+    function createTree(angle, radius) {
+        const trunk = new THREE.Mesh(
+            new THREE.CylinderGeometry(1, 1, 5),
+            new THREE.MeshStandardMaterial({ color: 0x4e342e })
+        );
+        const leaves = new THREE.Mesh(
+            new THREE.ConeGeometry(4, 8, 8),
+            new THREE.MeshStandardMaterial({ color: 0x2e7d32 })
+        );
+        leaves.position.y = 4;
+        trunk.add(leaves);
+
+        trunk.position.x = radius * Math.cos(angle);
+        trunk.position.z = radius * Math.sin(angle);
+        trunk.position.y = 2.5;
+        scene.add(trunk);
+    }
+
+    // --- GAME LOGIC ---
+
+    function animate() {
+        requestAnimationFrame(animate);
+        if(!isGameActive) return;
+
+        updatePlayer();
+        updateRivals();
+        updateCamera();
+        
+        // Animate Jewel
+        jewel.rotation.y += 0.01;
+        jewel.rotation.x += 0.005;
+
+        renderer.render(scene, camera);
+    }
+
+    function updatePlayer() {
+        // Acceleration
+        if (keys.ArrowUp) speed += 0.0005;
+        else speed -= 0.0002;
+
+        // Steering (Changes Radius)
+        if (keys.ArrowLeft) playerRadius -= 0.5;
+        if (keys.ArrowRight) playerRadius += 0.5;
+
+        // Constraints
+        let limit = isBoosting() ? maxSpeed * 1.5 : maxSpeed;
+        if (speed > limit) speed = limit;
+        if (speed < 0) speed = 0;
+
+        // Wall collisions
+        if (playerRadius < INNER_BOUND) playerRadius = INNER_BOUND;
+        if (playerRadius > OUTER_BOUND) playerRadius = OUTER_BOUND;
+
+        // Move Player Logic
+        const prevAngle = playerAngle;
+        playerAngle += speed;
+
+        // Lap Counter Logic
+        // We use Modulo 2PI to keep angle normalized, but check for wrap-around
+        if (playerAngle > Math.PI * 2) {
+            playerAngle -= Math.PI * 2;
+            currentLap++;
+            if(currentLap > totalLaps) {
+                gameOver("YOU WIN!");
+            } else {
+                updateHUD();
+                showText("LAP " + currentLap);
+            }
+        }
+
+        // Convert Polar to Cartesian for Drawing
+        // X = r * cos(theta), Z = r * sin(theta)
+        player.position.x = playerRadius * Math.cos(playerAngle);
+        player.position.z = playerRadius * Math.sin(playerAngle);
+
+        // Rotate car to face tangent
+        // Tangent angle is playerAngle + PI/2 (90 degrees)
+        player.rotation.y = -playerAngle; 
+
+        // Collision Check (Simple distance check)
+        obstacles.forEach(obs => {
+            const dist = player.position.distanceTo(obs.mesh.position);
+            if(dist < 3) {
+                speed = -0.01; // Bounce back
+                playerRadius += (Math.random()-0.5) * 5; // Shake
+            }
+        });
+        
+        if(boostTimer > 0) boostTimer--;
+        document.getElementById('boost-fx').style.opacity = isBoosting() ? 1 : 0;
+    }
+
+    function isBoosting() { return boostTimer > 0; }
+
+    function updateRivals() {
+        // Sort for position
+        let myTotalDist = (currentLap * Math.PI * 2) + playerAngle;
+        let rank = 1;
+
+        rivals.forEach(r => {
+            // Move Rival
+            r.angle += r.baseSpeed;
+            if(r.angle > Math.PI * 2) {
+                r.angle -= Math.PI * 2;
+                r.lap++;
+            }
+            
+            // Draw Rival
+            r.mesh.position.x = r.radius * Math.cos(r.angle);
+            r.mesh.position.z = r.radius * Math.sin(r.angle);
+            r.mesh.rotation.y = -r.angle;
+
+            // Calc Rank
+            let rivalTotalDist = (r.lap * Math.PI * 2) + r.angle;
+            if(rivalTotalDist > myTotalDist) rank++;
+        });
+
+        document.getElementById('pos').innerText = rank + "/4";
+    }
+
+    function updateCamera() {
+        // Camera logic: It must orbit BEHIND the player.
+        // We calculate a position slightly behind the current angle (-0.2 radians)
+        // And slightly further out or in.
+        
+        const camDist = 30;
+        const camHeight = 15;
+        const lookAhead = 0.5; // Look ahead of player
+
+        const camAngle = playerAngle - 0.2; // Lag behind
+        
+        camera.position.x = (playerRadius + camDist) * Math.cos(camAngle);
+        camera.position.z = (playerRadius + camDist) * Math.sin(camAngle);
+        camera.position.y = camHeight;
+
+        // Look at a point slightly ahead of the car
+        const lookX = playerRadius * Math.cos(playerAngle + lookAhead);
+        const lookZ = playerRadius * Math.sin(playerAngle + lookAhead);
+        
+        camera.lookAt(lookX, 0, lookZ);
+    }
+
+    function updateHUD() {
+        document.getElementById('lap').innerText = currentLap;
+    }
+
+    function showText(txt) {
+        const el = document.getElementById('center-text');
+        el.innerText = txt;
+        el.style.display = 'block';
+        setTimeout(() => el.style.display = 'none', 1500);
+    }
+
+    function gameOver(txt) {
+        isGameActive = false;
+        document.getElementById('center-text').innerText = txt;
+        document.getElementById('center-text').style.display = 'block';
+    }
+
+    function onResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    init();
+
+</script>
+</body>
+</html>
